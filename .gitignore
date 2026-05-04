@@ -1,0 +1,22 @@
+# Ambientes virtuais
+venv/
+.venv/
+env/
+.env
+
+# Logs e arquivos de estado
+*.log
+.oraculos/
+last_sync_timestamp
+
+# Arquivos de sistema/temp
+__pycache__/
+*.pyc
+.DS_Store
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+
+# Arquivos locais
+data.json
