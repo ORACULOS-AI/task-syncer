@@ -17,18 +17,32 @@ JIRA_URL = os.getenv("JIRA_URL", "https://oraculos.atlassian.net").rstrip('/')
 JIRA_EMAIL = os.getenv("JIRA_EMAIL")
 JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
 
-PROJECTS = {
-    "DLS": {"name": "Delphos", "path": os.path.join(BASE_DIR, "Delphos")},
-    "GDC": {"name": "Gestão de Conteúdos", "path": os.path.join(BASE_DIR, "Gestão de Conteúdos")},
-    "GDLEV": {"name": "Gestão de Leads e Vendas", "path": os.path.join(BASE_DIR, "Gestão de Leads e Vendas")},
-    "GDM": {"name": "Gestão de Membros", "path": os.path.join(BASE_DIR, "Gestão de Membros")},
-    "SLK": {"name": "SeLinka", "path": os.path.join(BASE_DIR, "SeLinka")}
-}
+def discover_projects():
+    """Descobre automaticamente todos os projetos acessíveis no espaço Jira."""
+    auth = HTTPBasicAuth(JIRA_EMAIL, JIRA_API_TOKEN)
+    headers = {"Accept": "application/json"}
+    url = f"{JIRA_URL}/rest/api/3/project/search?maxResults=100"
+
+    response = requests.get(url, headers=headers, auth=auth)
+    if response.status_code != 200:
+        print(f"Erro ao descobrir projetos: {response.status_code} - {response.text}")
+        return {}
+
+    projects = {}
+    for p in response.json().get("values", []):
+        key = p["key"]
+        name = p["name"]
+        # Remove prefixo "[KEY] " que o Jira às vezes inclui no nome
+        import re
+        clean_name = re.sub(r"^\[[A-Z0-9]+\]\s*", "", name).strip()
+        projects[key] = {"name": clean_name, "path": os.path.join(BASE_DIR, clean_name)}
+        print(f"  → Projeto encontrado: {key} — {name}")
+    return projects
 
 # Campos de interesse para extração de dados
 # customfield_10020: Sprint
 # customfield_10016: Story Point Estimate
-FIELDS = ["priority", "status", "summary", "issuetype", "created", "parent", "customfield_10020", "customfield_10016", "description", "assignee", "labels"]
+FIELDS = ["priority", "status", "summary", "issuetype", "created", "parent", "customfield_10020", "customfield_10016", "description", "assignee", "reporter", "labels"]
 
 def fetch_all_issue_ids(project_key):
     """Busca todos os IDs de issues de um projeto usando paginação."""
@@ -184,6 +198,8 @@ def generate_issues_folder(project_key, issues, path):
         created = fields.get("created", "")[:10]
         assignee_obj = fields.get("assignee")
         assignee = assignee_obj.get("displayName", "-") if assignee_obj else "-"
+        reporter_obj = fields.get("reporter")
+        reporter = reporter_obj.get("displayName", "-") if reporter_obj else "-"
         labels = fields.get("labels", [])
         parent = fields.get("parent")
         parent_str = f"{parent.get('key')}: {parent.get('fields', {}).get('summary', '')}" if parent else "-"
@@ -212,6 +228,7 @@ def generate_issues_folder(project_key, issues, path):
             f"**Pontos:** {points}  ",
             f"**Sprint:** {sprint_str}  ",
             f"**Responsável:** {assignee}  ",
+            f"**Reporter:** {reporter}  ",
             f"**Criado em:** {created}  ",
             f"**Epic/Parent:** {parent_str}  ",
         ]
@@ -242,21 +259,23 @@ def generate_issues_folder(project_key, issues, path):
 def generate_markdown_table(issues):
     if not issues:
         return "*Nenhum item encontrado.*\n"
-    
-    table = "| Key | Summary | Status | Type | Points | Created |\n| :--- | :--- | :--- | :--- | :--- | :--- |\n"
+
+    table = "| Key | Summary | Status | Type | Responsável | Points | Created |\n| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n"
     for issue in issues:
         fields = issue.get("fields", {})
         key = issue.get("key", "N/A")
         summary = fields.get("summary", "N/A").replace("|", "\\|")
         status = fields.get("status", {}).get("name", "N/A")
         itype = fields.get("issuetype", {}).get("name", "N/A")
+        assignee_obj = fields.get("assignee")
+        assignee = assignee_obj.get("displayName", "-") if assignee_obj else "-"
         points = fields.get("customfield_10016", "-")
         created = fields.get("created", "")[:10]
-        table += f"| {key} | {summary} | {status} | {itype} | {points} | {created} |\n"
+        table += f"| {key} | {summary} | {status} | {itype} | {assignee} | {points} | {created} |\n"
     return table
 
-def organize_and_save(project_key, issues):
-    info = PROJECTS[project_key]
+def organize_and_save(project_key, issues, projects):
+    info = projects[project_key]
     path = info["path"]
     os.makedirs(path, exist_ok=True)
     print(f"[3/3] Organizando arquivos em {path}...")
@@ -347,14 +366,18 @@ def organize_and_save(project_key, issues):
                     s_key = story["key"]
                     s_sum = story["fields"]["summary"]
                     s_status = story.get("fields", {}).get("status", {}).get("name", "N/A")
-                    f.write(f"- 📘 **{s_key}**: {s_sum} `({s_status})`\n")
-                    
+                    s_assignee_obj = story.get("fields", {}).get("assignee")
+                    s_assignee = s_assignee_obj.get("displayName", "-") if s_assignee_obj else "-"
+                    f.write(f"- 📘 **{s_key}**: {s_sum} `({s_status})` — 👤 {s_assignee}\n")
+
                     story_subs = parent_map.get(s_key, [])
                     for sub in story_subs:
                         sub_key = sub["key"]
                         sub_sum = sub["fields"]["summary"]
                         sub_status = sub.get("fields", {}).get("status", {}).get("name", "N/A")
-                        f.write(f"    - 🛠️ {sub_key}: {sub_sum} `({sub_status})`\n")
+                        sub_assignee_obj = sub.get("fields", {}).get("assignee")
+                        sub_assignee = sub_assignee_obj.get("displayName", "-") if sub_assignee_obj else "-"
+                        f.write(f"    - 🛠️ {sub_key}: {sub_sum} `({sub_status})` — 👤 {sub_assignee}\n")
             f.write("\n")
 
         # Stories sem Epic
@@ -364,10 +387,14 @@ def organize_and_save(project_key, issues):
         if orphan_stories:
             f.write("## 📄 Stories outside Epics\n")
             for story in orphan_stories:
-                f.write(f"- 📘 **{story['key']}**: {story['fields']['summary']}\n")
+                o_assignee_obj = story.get("fields", {}).get("assignee")
+                o_assignee = o_assignee_obj.get("displayName", "-") if o_assignee_obj else "-"
+                f.write(f"- 📘 **{story['key']}**: {story['fields']['summary']} — 👤 {o_assignee}\n")
                 story_subs = parent_map.get(story["key"], [])
                 for sub in story_subs:
-                    f.write(f"    - 🛠️ {sub['key']}: {sub['fields']['summary']}\n")
+                    sub_assignee_obj = sub.get("fields", {}).get("assignee")
+                    sub_assignee = sub_assignee_obj.get("displayName", "-") if sub_assignee_obj else "-"
+                    f.write(f"    - 🛠️ {sub['key']}: {sub['fields']['summary']} — 👤 {sub_assignee}\n")
 
     # 5. Geração da pasta ISSUES/
     generate_issues_folder(project_key, issues, path)
@@ -377,26 +404,28 @@ def main():
         print("Erro: JIRA_EMAIL e JIRA_API_TOKEN devem estar definidos no ambiente ou no arquivo .env.")
         return
 
-    print("🚀 Iniciando Sincronização Avançada da Oráculos...")
-    for key in PROJECTS:
+    print(f"🔍 Descobrindo projetos em {JIRA_URL}...")
+    projects = discover_projects()
+    if not projects:
+        print("Nenhum projeto encontrado. Verifique as credenciais e a URL.")
+        return
+
+    print(f"\n🚀 Iniciando sincronização de {len(projects)} projeto(s)...")
+    for key in projects:
         ids = fetch_all_issue_ids(key)
         if ids:
             details = fetch_issue_details(ids)
-            organize_and_save(key, details)
+            organize_and_save(key, details, projects)
         else:
             print(f"Aviso: Nenhuma issue encontrada para o projeto {key}.")
-    
+
     print(f"\n✅ Sincronização concluída com sucesso para todos os projetos!")
 
-    # Salva timestamp para automação (camada de terminal)
     try:
-        timestamp_dir = os.path.expanduser("~/.oraculos")
-        if not os.path.exists(timestamp_dir):
-            os.makedirs(timestamp_dir, exist_ok=True)
-            
-        timestamp_path = os.path.join(timestamp_dir, "last_sync_timestamp")
-        with open(timestamp_path, "w") as f:
-            import time
+        import time
+        timestamp_dir = os.path.expanduser("~/.youlex")
+        os.makedirs(timestamp_dir, exist_ok=True)
+        with open(os.path.join(timestamp_dir, "last_sync_timestamp"), "w") as f:
             f.write(str(int(time.time())))
     except Exception as e:
         print(f"Erro ao salvar timestamp: {e}")
