@@ -6,7 +6,7 @@ env/
 
 # Logs e arquivos de estado
 *.log
-.youlex/
+.task-syncer/
 last_sync_timestamp
 
 # Arquivos de sistema/temp

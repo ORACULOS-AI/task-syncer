@@ -14,7 +14,7 @@ except ImportError:
 # --- CONFIGURAÇÃO ---
 # Obtém o diretório do script para definir caminhos relativos
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-JIRA_URL = os.getenv("JIRA_URL", "https://youlex.atlassian.net").rstrip("/")
+JIRA_URL = os.getenv("JIRA_URL", "https://your-domain.atlassian.net").rstrip("/")
 JIRA_EMAIL = os.getenv("JIRA_EMAIL")
 JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
 JIRA_PROJECT_KEY = os.getenv("JIRA_PROJECT_KEY", "").strip()
@@ -514,7 +514,7 @@ def main():
     try:
         import time
 
-        timestamp_dir = os.path.expanduser("~/.youlex")
+        timestamp_dir = os.path.expanduser("~/.task-syncer")
         os.makedirs(timestamp_dir, exist_ok=True)
         with open(os.path.join(timestamp_dir, "last_sync_timestamp"), "w") as f:
             f.write(str(int(time.time())))
