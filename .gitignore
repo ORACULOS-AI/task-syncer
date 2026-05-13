@@ -6,7 +6,7 @@ env/
 
 # Logs e arquivos de estado
 *.log
-.oraculos/
+.youlex/
 last_sync_timestamp
 
 # Arquivos de sistema/temp

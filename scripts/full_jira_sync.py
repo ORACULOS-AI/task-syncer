@@ -6,6 +6,7 @@ from requests.auth import HTTPBasicAuth
 # Tenta carregar do .env se a biblioteca python-dotenv estiver instalada
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass
@@ -13,9 +14,11 @@ except ImportError:
 # --- CONFIGURAÇÃO ---
 # Obtém o diretório do script para definir caminhos relativos
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-JIRA_URL = os.getenv("JIRA_URL", "https://oraculos.atlassian.net").rstrip('/')
+JIRA_URL = os.getenv("JIRA_URL", "https://youlex.atlassian.net").rstrip("/")
 JIRA_EMAIL = os.getenv("JIRA_EMAIL")
 JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
+JIRA_PROJECT_KEY = os.getenv("JIRA_PROJECT_KEY", "").strip()
+
 
 def discover_projects():
     """Descobre automaticamente todos os projetos acessíveis no espaço Jira."""
@@ -34,15 +37,31 @@ def discover_projects():
         name = p["name"]
         # Remove prefixo "[KEY] " que o Jira às vezes inclui no nome
         import re
+
         clean_name = re.sub(r"^\[[A-Z0-9]+\]\s*", "", name).strip()
         projects[key] = {"name": clean_name, "path": os.path.join(BASE_DIR, clean_name)}
         print(f"  → Projeto encontrado: {key} — {name}")
     return projects
 
+
 # Campos de interesse para extração de dados
 # customfield_10020: Sprint
 # customfield_10016: Story Point Estimate
-FIELDS = ["priority", "status", "summary", "issuetype", "created", "parent", "customfield_10020", "customfield_10016", "description", "assignee", "reporter", "labels"]
+FIELDS = [
+    "priority",
+    "status",
+    "summary",
+    "issuetype",
+    "created",
+    "parent",
+    "customfield_10020",
+    "customfield_10016",
+    "description",
+    "assignee",
+    "reporter",
+    "labels",
+]
+
 
 def fetch_all_issue_ids(project_key):
     """Busca todos os IDs de issues de um projeto usando paginação."""
@@ -50,33 +69,34 @@ def fetch_all_issue_ids(project_key):
     auth = HTTPBasicAuth(JIRA_EMAIL, JIRA_API_TOKEN)
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     url = f"{JIRA_URL}/rest/api/3/search/jql"
-    
+
     all_ids = []
     next_token = None
-    
+
     while True:
         payload = {
             "jql": f"project = {project_key} ORDER BY created DESC",
-            "maxResults": 100
+            "maxResults": 100,
         }
         if next_token:
             payload["nextPageToken"] = next_token
-            
+
         response = requests.post(url, headers=headers, json=payload, auth=auth)
         if response.status_code != 200:
             print(f"Erro na busca JQL: {response.status_code} - {response.text}")
             break
-            
+
         data = response.json()
         issues = data.get("issues", [])
         all_ids.extend([i["id"] for i in issues])
-        
+
         next_token = data.get("nextPageToken")
         if not next_token or data.get("isLast"):
             break
-            
+
     print(f"Encontrados {len(all_ids)} itens.")
     return all_ids
+
 
 def fetch_issue_details(issue_ids):
     """Busca detalhes das issues em lotes (Bulk Fetch)."""
@@ -84,23 +104,21 @@ def fetch_issue_details(issue_ids):
     auth = HTTPBasicAuth(JIRA_EMAIL, JIRA_API_TOKEN)
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     url = f"{JIRA_URL}/rest/api/3/issue/bulkfetch"
-    
+
     all_details = []
     # Lotes de 100 para evitar timeout/limites
     for i in range(0, len(issue_ids), 100):
-        batch = issue_ids[i:i+100]
-        payload = {
-            "issueIdsOrKeys": batch,
-            "fields": FIELDS
-        }
+        batch = issue_ids[i : i + 100]
+        payload = {"issueIdsOrKeys": batch, "fields": FIELDS}
         response = requests.post(url, headers=headers, json=payload, auth=auth)
         if response.status_code == 200:
             all_details.extend(response.json().get("issues", []))
             print(f"  ... processados {len(all_details)}/{len(issue_ids)}")
         else:
             print(f"Erro no Bulk Fetch lote {i}: {response.status_code}")
-            
+
     return all_details
+
 
 def parse_sprint(issue):
     """Extrai informações da sprint do campo customfield_10020."""
@@ -112,6 +130,7 @@ def parse_sprint(issue):
     if active:
         return active[0]
     return sprints[-1]
+
 
 def adf_to_markdown(node, depth=0):
     """Converte ADF (Atlassian Document Format) para texto markdown legível."""
@@ -180,6 +199,7 @@ def generate_issues_folder(project_key, issues, path):
 
     # Limpa a pasta completamente para garantir sincronização fiel
     import shutil
+
     if os.path.exists(issues_root):
         shutil.rmtree(issues_root)
     os.makedirs(issues_root, exist_ok=True)
@@ -193,7 +213,11 @@ def generate_issues_folder(project_key, issues, path):
         key = issue.get("key", "N/A")
         summary = fields.get("summary", "N/A")
         status = fields.get("status", {}).get("name", "Sem Status")
-        priority = fields.get("priority", {}).get("name", "-") if fields.get("priority") else "-"
+        priority = (
+            fields.get("priority", {}).get("name", "-")
+            if fields.get("priority")
+            else "-"
+        )
         points = fields.get("customfield_10016", "-")
         created = fields.get("created", "")[:10]
         assignee_obj = fields.get("assignee")
@@ -202,7 +226,11 @@ def generate_issues_folder(project_key, issues, path):
         reporter = reporter_obj.get("displayName", "-") if reporter_obj else "-"
         labels = fields.get("labels", [])
         parent = fields.get("parent")
-        parent_str = f"{parent.get('key')}: {parent.get('fields', {}).get('summary', '')}" if parent else "-"
+        parent_str = (
+            f"{parent.get('key')}: {parent.get('fields', {}).get('summary', '')}"
+            if parent
+            else "-"
+        )
 
         sprint = parse_sprint(issue)
         sprint_str = sprint.get("name", "-") if sprint else "-"
@@ -250,7 +278,9 @@ def generate_issues_folder(project_key, issues, path):
 
     with open(os.path.join(issues_root, "README.md"), "w", encoding="utf-8") as f:
         f.write(f"# Issues — {project_key}\n\n")
-        f.write("Cada issue tem seu próprio `.md` dentro da pasta do status correspondente.\n\n")
+        f.write(
+            "Cada issue tem seu próprio `.md` dentro da pasta do status correspondente.\n\n"
+        )
         f.write("| Status | Quantidade |\n| :--- | :---: |\n")
         for st, count in sorted(status_counts.items()):
             f.write(f"| {st} | {count} |\n")
@@ -274,12 +304,13 @@ def generate_markdown_table(issues):
         table += f"| {key} | {summary} | {status} | {itype} | {assignee} | {points} | {created} |\n"
     return table
 
+
 def organize_and_save(project_key, issues, projects):
     info = projects[project_key]
     path = info["path"]
     os.makedirs(path, exist_ok=True)
     print(f"[3/3] Organizando arquivos em {path}...")
-    
+
     # Salva JSON completo para backup técnico
     with open(os.path.join(path, "data.json"), "w", encoding="utf-8") as f:
         json.dump({"issues": issues}, f, indent=2, ensure_ascii=False)
@@ -288,21 +319,23 @@ def organize_and_save(project_key, issues, projects):
     active_sprints = {}
     future_sprints = {}
     backlog = []
-    
+
     for issue in issues:
         itype = issue.get("fields", {}).get("issuetype", {}).get("name")
         if itype == "Epic":
-            continue # Epics não vão para sprints da mesma forma
-            
+            continue  # Epics não vão para sprints da mesma forma
+
         sprint = parse_sprint(issue)
         if sprint:
             s_name = sprint.get("name", "Unknown Sprint")
             s_state = sprint.get("state")
             if s_state == "active":
-                if s_name not in active_sprints: active_sprints[s_name] = []
+                if s_name not in active_sprints:
+                    active_sprints[s_name] = []
                 active_sprints[s_name].append(issue)
             else:
-                if s_name not in future_sprints: future_sprints[s_name] = []
+                if s_name not in future_sprints:
+                    future_sprints[s_name] = []
                 future_sprints[s_name].append(issue)
         else:
             backlog.append(issue)
@@ -310,8 +343,10 @@ def organize_and_save(project_key, issues, projects):
     # 2. Geração do BOARD.md
     with open(os.path.join(path, "BOARD.md"), "w", encoding="utf-8") as f:
         f.write(f"# Board - {info['name']} ({project_key})\n\n")
-        f.write("Este arquivo mostra as tarefas planejadas para execução imediata ou futura.\n\n")
-        
+        f.write(
+            "Este arquivo mostra as tarefas planejadas para execução imediata ou futura.\n\n"
+        )
+
         if not active_sprints:
             f.write("## 🏃 Current Sprint\n*Sem sprint ativa no momento.*\n\n")
         else:
@@ -319,7 +354,7 @@ def organize_and_save(project_key, issues, projects):
                 f.write(f"## 🏃 Current Sprint: {s_name}\n")
                 f.write(generate_markdown_table(s_issues))
                 f.write("\n")
-        
+
         if future_sprints:
             f.write("## 📅 Future Sprints\n")
             for s_name, s_issues in future_sprints.items():
@@ -334,9 +369,20 @@ def organize_and_save(project_key, issues, projects):
         f.write(generate_markdown_table(backlog))
 
     # 4. Geração do EPICS.md (Hierarquia)
-    epics = [i for i in issues if i.get("fields", {}).get("issuetype", {}).get("name") == "Epic"]
-    stories = [i for i in issues if i.get("fields", {}).get("issuetype", {}).get("name") != "Epic" and not i.get("fields", {}).get("issuetype", {}).get("subtask")]
-    subtasks = [i for i in issues if i.get("fields", {}).get("issuetype", {}).get("subtask")]
+    epics = [
+        i
+        for i in issues
+        if i.get("fields", {}).get("issuetype", {}).get("name") == "Epic"
+    ]
+    stories = [
+        i
+        for i in issues
+        if i.get("fields", {}).get("issuetype", {}).get("name") != "Epic"
+        and not i.get("fields", {}).get("issuetype", {}).get("subtask")
+    ]
+    subtasks = [
+        i for i in issues if i.get("fields", {}).get("issuetype", {}).get("subtask")
+    ]
 
     # Mapear filhos para pais
     parent_map = {}
@@ -351,13 +397,13 @@ def organize_and_save(project_key, issues, projects):
     with open(os.path.join(path, "EPICS.md"), "w", encoding="utf-8") as f:
         f.write(f"# Hierarchy - {info['name']} ({project_key})\n\n")
         f.write("Visão estrutural de grandes entregas e seus desdobramentos.\n\n")
-        
+
         for epic in epics:
             e_key = epic["key"]
             e_sum = epic["fields"]["summary"]
             status = epic.get("fields", {}).get("status", {}).get("name", "N/A")
             f.write(f"## 🏆 {e_key}: {e_sum} `[{status}]`\n")
-            
+
             epic_stories = parent_map.get(e_key, [])
             if not epic_stories:
                 f.write("*Sem histórias vinculadas.*\n")
@@ -365,43 +411,77 @@ def organize_and_save(project_key, issues, projects):
                 for story in epic_stories:
                     s_key = story["key"]
                     s_sum = story["fields"]["summary"]
-                    s_status = story.get("fields", {}).get("status", {}).get("name", "N/A")
+                    s_status = (
+                        story.get("fields", {}).get("status", {}).get("name", "N/A")
+                    )
                     s_assignee_obj = story.get("fields", {}).get("assignee")
-                    s_assignee = s_assignee_obj.get("displayName", "-") if s_assignee_obj else "-"
-                    f.write(f"- 📘 **{s_key}**: {s_sum} `({s_status})` — 👤 {s_assignee}\n")
+                    s_assignee = (
+                        s_assignee_obj.get("displayName", "-")
+                        if s_assignee_obj
+                        else "-"
+                    )
+                    f.write(
+                        f"- 📘 **{s_key}**: {s_sum} `({s_status})` — 👤 {s_assignee}\n"
+                    )
 
                     story_subs = parent_map.get(s_key, [])
                     for sub in story_subs:
                         sub_key = sub["key"]
                         sub_sum = sub["fields"]["summary"]
-                        sub_status = sub.get("fields", {}).get("status", {}).get("name", "N/A")
+                        sub_status = (
+                            sub.get("fields", {}).get("status", {}).get("name", "N/A")
+                        )
                         sub_assignee_obj = sub.get("fields", {}).get("assignee")
-                        sub_assignee = sub_assignee_obj.get("displayName", "-") if sub_assignee_obj else "-"
-                        f.write(f"    - 🛠️ {sub_key}: {sub_sum} `({sub_status})` — 👤 {sub_assignee}\n")
+                        sub_assignee = (
+                            sub_assignee_obj.get("displayName", "-")
+                            if sub_assignee_obj
+                            else "-"
+                        )
+                        f.write(
+                            f"    - 🛠️ {sub_key}: {sub_sum} `({sub_status})` — 👤 {sub_assignee}\n"
+                        )
             f.write("\n")
 
         # Stories sem Epic
         epic_keys = [e["key"] for e in epics]
-        orphan_stories = [s for s in stories if not s.get("fields", {}).get("parent") or s.get("fields", {}).get("parent", {}).get("key") not in epic_keys]
+        orphan_stories = [
+            s
+            for s in stories
+            if not s.get("fields", {}).get("parent")
+            or s.get("fields", {}).get("parent", {}).get("key") not in epic_keys
+        ]
 
         if orphan_stories:
             f.write("## 📄 Stories outside Epics\n")
             for story in orphan_stories:
                 o_assignee_obj = story.get("fields", {}).get("assignee")
-                o_assignee = o_assignee_obj.get("displayName", "-") if o_assignee_obj else "-"
-                f.write(f"- 📘 **{story['key']}**: {story['fields']['summary']} — 👤 {o_assignee}\n")
+                o_assignee = (
+                    o_assignee_obj.get("displayName", "-") if o_assignee_obj else "-"
+                )
+                f.write(
+                    f"- 📘 **{story['key']}**: {story['fields']['summary']} — 👤 {o_assignee}\n"
+                )
                 story_subs = parent_map.get(story["key"], [])
                 for sub in story_subs:
                     sub_assignee_obj = sub.get("fields", {}).get("assignee")
-                    sub_assignee = sub_assignee_obj.get("displayName", "-") if sub_assignee_obj else "-"
-                    f.write(f"    - 🛠️ {sub['key']}: {sub['fields']['summary']} — 👤 {sub_assignee}\n")
+                    sub_assignee = (
+                        sub_assignee_obj.get("displayName", "-")
+                        if sub_assignee_obj
+                        else "-"
+                    )
+                    f.write(
+                        f"    - 🛠️ {sub['key']}: {sub['fields']['summary']} — 👤 {sub_assignee}\n"
+                    )
 
     # 5. Geração da pasta ISSUES/
     generate_issues_folder(project_key, issues, path)
 
+
 def main():
     if not JIRA_EMAIL or not JIRA_API_TOKEN:
-        print("Erro: JIRA_EMAIL e JIRA_API_TOKEN devem estar definidos no ambiente ou no arquivo .env.")
+        print(
+            "Erro: JIRA_EMAIL e JIRA_API_TOKEN devem estar definidos no ambiente ou no arquivo .env."
+        )
         return
 
     print(f"🔍 Descobrindo projetos em {JIRA_URL}...")
@@ -410,8 +490,18 @@ def main():
         print("Nenhum projeto encontrado. Verifique as credenciais e a URL.")
         return
 
-    print(f"\n🚀 Iniciando sincronização de {len(projects)} projeto(s)...")
-    for key in projects:
+    if JIRA_PROJECT_KEY:
+        if JIRA_PROJECT_KEY not in projects:
+            print(
+                f"Erro: Projeto '{JIRA_PROJECT_KEY}' não encontrado. Projetos disponíveis: {', '.join(projects.keys())}"
+            )
+            return
+        keys_to_sync = [JIRA_PROJECT_KEY]
+    else:
+        keys_to_sync = list(projects.keys())
+
+    print(f"\n🚀 Iniciando sincronização de {len(keys_to_sync)} projeto(s)...")
+    for key in keys_to_sync:
         ids = fetch_all_issue_ids(key)
         if ids:
             details = fetch_issue_details(ids)
@@ -423,12 +513,14 @@ def main():
 
     try:
         import time
+
         timestamp_dir = os.path.expanduser("~/.youlex")
         os.makedirs(timestamp_dir, exist_ok=True)
         with open(os.path.join(timestamp_dir, "last_sync_timestamp"), "w") as f:
             f.write(str(int(time.time())))
     except Exception as e:
         print(f"Erro ao salvar timestamp: {e}")
+
 
 if __name__ == "__main__":
     main()
