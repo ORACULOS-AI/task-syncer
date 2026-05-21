@@ -187,9 +187,6 @@ def generate_issues_folder(project_key, issues, path):
     for issue in issues:
         fields = issue.get("fields", {})
         itype = fields.get("issuetype", {}).get("name", "")
-        if itype == "Epic":
-            continue
-
         key = issue.get("key", "N/A")
         summary = fields.get("summary", "N/A")
         status = fields.get("status", {}).get("name", "Sem Status")
@@ -242,9 +239,6 @@ def generate_issues_folder(project_key, issues, path):
     # Gera índice resumido ISSUES/README.md
     status_counts = {}
     for issue in issues:
-        itype = issue.get("fields", {}).get("issuetype", {}).get("name", "")
-        if itype == "Epic":
-            continue
         st = issue.get("fields", {}).get("status", {}).get("name", "Sem Status")
         status_counts[st] = status_counts.get(st, 0) + 1
 
