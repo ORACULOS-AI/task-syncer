@@ -14,10 +14,10 @@ except ImportError:
 # --- CONFIGURAÇÃO ---
 # Obtém o diretório do script para definir caminhos relativos
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-JIRA_URL = os.getenv("JIRA_URL", "https://oraculos.atlassian.net").rstrip("/")
+JIRA_URL = os.getenv("JIRA_URL", "https://your-domain.atlassian.net").rstrip("/")
 JIRA_EMAIL = os.getenv("JIRA_EMAIL")
 JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
-OUTPUT_DIR = os.getenv("OUTPUT_DIR", "_sync").strip()
+JIRA_PROJECT_KEY = os.getenv("JIRA_PROJECT_KEY", "").strip()
 
 
 def discover_projects():
@@ -210,9 +210,6 @@ def generate_issues_folder(project_key, issues, path):
     for issue in issues:
         fields = issue.get("fields", {})
         itype = fields.get("issuetype", {}).get("name", "")
-        if itype == "Epic":
-            continue
-
         key = issue.get("key", "N/A")
         summary = fields.get("summary", "N/A")
         status = fields.get("status", {}).get("name", "Sem Status")
@@ -273,9 +270,6 @@ def generate_issues_folder(project_key, issues, path):
     # Gera índice resumido ISSUES/README.md
     status_counts = {}
     for issue in issues:
-        itype = issue.get("fields", {}).get("issuetype", {}).get("name", "")
-        if itype == "Epic":
-            continue
         st = issue.get("fields", {}).get("status", {}).get("name", "Sem Status")
         status_counts[st] = status_counts.get(st, 0) + 1
 
@@ -493,8 +487,18 @@ def main():
         print("Nenhum projeto encontrado. Verifique as credenciais e a URL.")
         return
 
-    print(f"\n🚀 Iniciando sincronização de {len(projects)} projeto(s)...")
-    for key in projects:
+    if JIRA_PROJECT_KEY:
+        if JIRA_PROJECT_KEY not in projects:
+            print(
+                f"Erro: Projeto '{JIRA_PROJECT_KEY}' não encontrado. Projetos disponíveis: {', '.join(projects.keys())}"
+            )
+            return
+        keys_to_sync = [JIRA_PROJECT_KEY]
+    else:
+        keys_to_sync = list(projects.keys())
+
+    print(f"\n🚀 Iniciando sincronização de {len(keys_to_sync)} projeto(s)...")
+    for key in keys_to_sync:
         ids = fetch_all_issue_ids(key)
         if ids:
             details = fetch_issue_details(ids)
@@ -507,7 +511,7 @@ def main():
     try:
         import time
 
-        timestamp_dir = os.path.expanduser("~/.youlex")
+        timestamp_dir = os.path.expanduser("~/.task-syncer")
         os.makedirs(timestamp_dir, exist_ok=True)
         with open(os.path.join(timestamp_dir, "last_sync_timestamp"), "w") as f:
             f.write(str(int(time.time())))
