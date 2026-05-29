@@ -39,7 +39,10 @@ def discover_projects():
         import re
 
         clean_name = re.sub(r"^\[[A-Z0-9]+\]\s*", "", name).strip()
-        projects[key] = {"name": clean_name, "path": os.path.join(BASE_DIR, clean_name)}
+        projects[key] = {
+            "name": clean_name,
+            "path": os.path.join(BASE_DIR, OUTPUT_DIR, clean_name),
+        }
         print(f"  → Projeto encontrado: {key} — {name}")
     return projects
 
